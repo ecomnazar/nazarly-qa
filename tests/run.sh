@@ -66,10 +66,16 @@ OUT=$(node "$LIB/baseline-diff.mjs" "$TMP/empty")
 check "empty dir"        "$OUT" "BASELINE=first-run"
 
 echo "== manifests =="
-node -e "JSON.parse(require('fs').readFileSync('$HERE/../.claude-plugin/plugin.json','utf8'))" \
-  && echo "  ok: plugin.json valid" || { echo "  FAIL: plugin.json"; FAIL=1; }
-node -e "JSON.parse(require('fs').readFileSync('$HERE/../.claude-plugin/marketplace.json','utf8'))" \
-  && echo "  ok: marketplace.json valid" || { echo "  FAIL: marketplace.json"; FAIL=1; }
+if node -e "JSON.parse(require('fs').readFileSync('$HERE/../.claude-plugin/plugin.json','utf8'))"; then
+  echo "  ok: plugin.json valid"
+else
+  echo "  FAIL: plugin.json"; FAIL=1
+fi
+if node -e "JSON.parse(require('fs').readFileSync('$HERE/../.claude-plugin/marketplace.json','utf8'))"; then
+  echo "  ok: marketplace.json valid"
+else
+  echo "  FAIL: marketplace.json"; FAIL=1
+fi
 
 if [ "$FAIL" -eq 0 ]; then echo "ALL TESTS PASSED"; else echo "TESTS FAILED"; fi
 exit "$FAIL"
