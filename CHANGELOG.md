@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.3] — 2026-07-12
+
+PHP/Laravel stack detection — evidence from a real run on a Laravel 12 backend: the detector reported `STACKS=web-vite` (Laravel ships vite for the asset pipeline), so the QA run would drive `npm run dev` as the app and never see `composer test`, `phpunit.xml` or `artisan`. A backend misdetected as a frontend is worse than an empty detect: the empty case at least asks the user.
+
+- `lib/detect-stack.sh`: new PHP block — `HAS_COMPOSER`, `server-laravel`/`server-symfony` stacks, `HAS_ARTISAN`, `PHP_TEST` (phpunit/pest), and `COMPOSER_SCRIPTS` filtered like npm scripts (test/dev/setup/migrate…, array-valued commands supported).
+- vite in a directory whose `composer.json` carries a PHP framework is now tagged `+vite-assets` instead of adding a `web-vite` stack.
+- `phpunit.xml`/`.dist` variants join the test-config search; `vendor/` and `.idea/` excluded from it.
+- Smoke suite: a Laravel fixture (composer.json + asset-pipeline package.json) with a negative check that `web-vite` stays out of `STACKS`.
+
+Review hardening on top of the original PR (all cases verified against fixtures):
+
+- **Monorepo subdirs**: composer.json is now scanned in `apps/*`, `packages/*`, `services/*` too — a Laravel backend in `services/api/` used to get `+vite-assets` but an empty `STACKS` (the PHP block only read the root). Subdir output: `PHP dir=<d> fw=<laravel|lumen|symfony> artisan=<yes|no> test=<runner>` + per-dir `COMPOSER_SCRIPTS`.
+- **Lumen / legacy Symfony**: `laravel/lumen-framework` and the `symfony/symfony` metapackage join the framework list — a Lumen backend with a vite asset pipeline reproduced the exact `web-vite` misdetect this release fixes.
+- **Libraries are not servers**: framework stack classification reads `require` only; `laravel/framework` in `require-dev` (a Laravel *package* repo) no longer produces `server-laravel`. Test runners (phpunit/pest) still read both.
+- **Fail loud**: an unparseable composer.json prints `COMPOSER_PARSE=error dir=<d>` instead of silently degrading to the pre-fix answer; a missing node prints `NODE=missing` once.
+- One redundant `node` spawn per workspace package removed (the vite check result is now cached); `vendor/` excluded from the `E2E_DIR` search.
+
 ## [1.2.2] — 2026-07-11
 
 - **`networkidle0`/`networkidle2`** — the `networkidle` regex now also catches Puppeteer's variants (`networkidle[02]?`); the closing quote previously had to follow `networkidle` immediately, so Puppeteer waits slipped through. Source: [Puppeteer page.goto](https://pptr.dev/api/puppeteer.page.goto) — same fixed-idle-window semantics Playwright discourages for tests. Smoke suite: positive fixture `goto(url, { waitUntil: 'networkidle0' })`.

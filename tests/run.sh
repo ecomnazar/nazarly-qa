@@ -41,6 +41,92 @@ check "hardware budget"        "$OUT" "HEAVY_SLOTS="
 check "qa memory block"        "$OUT" "QA_REPORT_COUNT=0"
 check "flow docs"              "$OUT" "DOC=README.md"
 
+echo "== detect-stack.sh: php/laravel =="
+# fixture: a Laravel backend whose package.json only drives the vite asset pipeline
+mkdir -p "$TMP/laravel"
+cat > "$TMP/laravel/composer.json" <<'EOF'
+{ "name": "acme/shop-backend",
+  "require": { "php": "^8.2", "laravel/framework": "^12.0" },
+  "require-dev": { "phpunit/phpunit": "^11.5" },
+  "scripts": { "test": ["@php artisan test"], "dev": ["npx concurrently \"php artisan serve\" \"npm run dev\""], "setup": "cp .env.example .env" } }
+EOF
+cat > "$TMP/laravel/package.json" <<'EOF'
+{ "name": "acme-shop-assets", "devDependencies": { "vite": "^6.0.0" }, "scripts": { "dev": "vite", "build": "vite build" } }
+EOF
+touch "$TMP/laravel/artisan" "$TMP/laravel/phpunit.xml"
+OUT=$(bash "$LIB/detect-stack.sh" "$TMP/laravel")
+check "composer detected"      "$OUT" "HAS_COMPOSER=yes"
+check "laravel stack"          "$OUT" "server-laravel"
+check "artisan flagged"        "$OUT" "HAS_ARTISAN=yes"
+check "php test runner"        "$OUT" "PHP_TEST=phpunit"
+check "composer test script"   "$OUT" "test="
+check "phpunit config"         "$OUT" "CONFIG=./phpunit.xml"
+check "vite marked as assets"  "$OUT" "+vite-assets"
+if echo "$OUT" | grep "^STACKS=" | grep -q "web-vite"; then
+  echo "  FAIL: laravel asset-pipeline vite misdetected as web-vite stack"; FAIL=1
+else
+  echo "  ok: web-vite not in STACKS for a laravel backend"
+fi
+
+echo "== detect-stack.sh: php monorepo / library / lumen / broken json =="
+# Laravel backend in a monorepo subdir: the PHP block used to read only the
+# root composer.json — the subdir got +vite-assets but STACKS stayed empty
+mkdir -p "$TMP/phpmono/services/api"
+cat > "$TMP/phpmono/package.json" <<'EOF'
+{ "name": "phpmono-root", "workspaces": ["services/*"] }
+EOF
+cat > "$TMP/phpmono/services/api/composer.json" <<'EOF'
+{ "name": "acme/api", "require": { "laravel/framework": "^12.0" }, "require-dev": { "pestphp/pest": "^3.0" }, "scripts": { "test": "pest" } }
+EOF
+cat > "$TMP/phpmono/services/api/package.json" <<'EOF'
+{ "name": "acme-api-assets", "devDependencies": { "vite": "^6.0.0" } }
+EOF
+touch "$TMP/phpmono/services/api/artisan"
+OUT=$(bash "$LIB/detect-stack.sh" "$TMP/phpmono")
+check "subdir laravel stack"   "$OUT" "server-laravel"
+check "subdir php line"        "$OUT" "PHP dir=services/api fw=laravel artisan=yes test=pest"
+check "subdir composer script" "$OUT" "PKG=services/api COMPOSER_SCRIPTS="
+if echo "$OUT" | grep "^STACKS=" | grep -q "web-vite"; then
+  echo "  FAIL: subdir asset-pipeline vite misdetected as web-vite"; FAIL=1
+else
+  echo "  ok: web-vite not in STACKS for laravel-in-subdir"
+fi
+
+# a Laravel *package* (framework only in require-dev) is a library, not a server
+mkdir -p "$TMP/phplib"
+cat > "$TMP/phplib/composer.json" <<'EOF'
+{ "name": "acme/laravel-extension", "require": { "php": "^8.2" }, "require-dev": { "laravel/framework": "^12.0", "phpunit/phpunit": "^11.5" } }
+EOF
+OUT=$(bash "$LIB/detect-stack.sh" "$TMP/phplib")
+check "library keeps test runner" "$OUT" "PHP_TEST=phpunit"
+if echo "$OUT" | grep "^STACKS=" | grep -q "server-laravel"; then
+  echo "  FAIL: require-dev framework misdetected as server-laravel"; FAIL=1
+else
+  echo "  ok: require-dev laravel is not a server stack"
+fi
+
+# Lumen with a vite asset pipeline: same misdetect, different package name
+mkdir -p "$TMP/lumen"
+cat > "$TMP/lumen/composer.json" <<'EOF'
+{ "name": "acme/lumen-api", "require": { "laravel/lumen-framework": "^10.0" } }
+EOF
+cat > "$TMP/lumen/package.json" <<'EOF'
+{ "name": "lumen-assets", "devDependencies": { "vite": "^5.0.0" } }
+EOF
+OUT=$(bash "$LIB/detect-stack.sh" "$TMP/lumen")
+check "lumen -> laravel stack" "$OUT" "server-laravel"
+if echo "$OUT" | grep "^STACKS=" | grep -q "web-vite"; then
+  echo "  FAIL: lumen asset vite misdetected as web-vite"; FAIL=1
+else
+  echo "  ok: web-vite not in STACKS for lumen"
+fi
+
+# broken composer.json must fail loud, not silently degrade
+mkdir -p "$TMP/phpbad"
+echo '{ broken json' > "$TMP/phpbad/composer.json"
+OUT=$(bash "$LIB/detect-stack.sh" "$TMP/phpbad")
+check "parse error is loud"    "$OUT" "COMPOSER_PARSE=error dir=."
+
 echo "== baseline-diff.mjs =="
 R="$TMP/reports"; mkdir -p "$R"
 cat > "$R/2026-01-01-1200.json" <<'EOF'

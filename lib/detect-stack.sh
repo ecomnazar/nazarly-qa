@@ -37,6 +37,28 @@ dep_exists() {
   pkg_field "$f" 'pkg.dependencies&&pkg.dependencies["'"$name"'"]?1:(pkg.devDependencies&&pkg.devDependencies["'"$name"'"]?1:"")'
 }
 
+# composer_dep <dir> <package-name> -> "1" if present in require/require-dev
+composer_dep() {
+  local d="$1" name="$2"
+  pkg_field "$d/composer.json" 'pkg.require&&pkg.require["'"$name"'"]?1:((pkg["require-dev"]||{})["'"$name"'"]?1:"")'
+}
+
+# composer_req <dir> <package-name> -> "1" only if present in require:
+# a framework in require-dev means a library repo testing *against* the
+# framework, not a framework app — that must not become a server stack.
+composer_req() {
+  local d="$1" name="$2"
+  pkg_field "$d/composer.json" 'pkg.require&&pkg.require["'"$name"'"]?1:""'
+}
+
+# php_framework <dir> -> laravel|lumen|symfony (empty if none), from require only
+php_framework() {
+  local d="$1"
+  [ -n "$(composer_req "$d" laravel/framework)" ] && { echo laravel; return; }
+  [ -n "$(composer_req "$d" laravel/lumen-framework)" ] && { echo lumen; return; }
+  { [ -n "$(composer_req "$d" symfony/framework-bundle)" ] || [ -n "$(composer_req "$d" symfony/symfony)" ]; } && echo symfony
+}
+
 echo "PROJECT_DIR=$ROOT"
 echo "DETECTED_AT=$(date +%Y-%m-%dT%H:%M:%S 2>/dev/null || echo unknown)"
 
@@ -124,9 +146,15 @@ for pf in ${PKG_FILES[@]+"${PKG_FILES[@]}"}; do
   dir=$(dirname "$pf")
   name=$(pkg_field "$pf" 'pkg.name||""')
   kind=""
+  # vite next to a PHP framework (Laravel 12+ ships it by default) is the asset
+  # pipeline, not a web app — without this check a Laravel backend detects as web-vite
+  # and the QA run drives `npm run dev` instead of the real server.
+  php_fw="$(php_framework "$dir")"
+  has_vite="$(dep_exists "$pf" vite)"
   [ -n "$(dep_exists "$pf" electron)" ] && kind="$kind electron" && add_stack electron
   [ -n "$(dep_exists "$pf" next)" ] && kind="$kind next" && add_stack web-next
-  { [ -n "$(dep_exists "$pf" vite)" ] && [ -z "$(dep_exists "$pf" electron)" ]; } && kind="$kind vite" && add_stack web-vite
+  { [ -n "$has_vite" ] && [ -z "$(dep_exists "$pf" electron)" ] && [ -z "$php_fw" ]; } && kind="$kind vite" && add_stack web-vite
+  { [ -n "$has_vite" ] && [ -n "$php_fw" ]; } && kind="$kind +vite-assets"
   [ -n "$(dep_exists "$pf" expo)" ] && kind="$kind expo" && add_stack expo-rn
   { [ -n "$(dep_exists "$pf" react-native)" ] && [ -z "$(dep_exists "$pf" expo)" ]; } && kind="$kind react-native" && add_stack rn
   [ -n "$(dep_exists "$pf" @nestjs/core)" ] && kind="$kind nestjs" && add_stack server-nest
@@ -146,15 +174,57 @@ for pf in ${PKG_FILES[@]+"${PKG_FILES[@]}"}; do
   echo "WS name=${name:-?} dir=$dir kind=${kind# }"
 done
 
+# ── php / composer: a PHP backend can have no package.json at all, or one that
+# only drives the asset pipeline — package.json scanning alone misses it entirely.
+# Scanned in the root AND monorepo subdirs (a Laravel in services/api/ used to
+# get +vite-assets but an empty STACKS because only the root was read) ──
+declare -a COMPOSER_DIRS=()
+[ -f "composer.json" ] && COMPOSER_DIRS+=(".")
+for d in apps/* packages/* services/*; do
+  [ -f "$d/composer.json" ] && COMPOSER_DIRS+=("$d")
+done
+if [ "${#COMPOSER_DIRS[@]}" -gt 0 ]; then
+  echo "--- PHP ---"
+  echo "HAS_COMPOSER=yes"
+  # without node every check below silently returns "nothing" — say so once
+  has_node || echo "NODE=missing"
+  for d in ${COMPOSER_DIRS[@]+"${COMPOSER_DIRS[@]}"}; do
+    # fail loud: an unparseable composer.json would silently bring back the
+    # pre-fix web-vite answer with a contradictory report (HAS_COMPOSER=yes,
+    # no stack, no test runner)
+    if has_node && [ -z "$(pkg_field "$d/composer.json" '1')" ]; then
+      echo "COMPOSER_PARSE=error dir=$d"
+      continue
+    fi
+    fw="$(php_framework "$d")"
+    case "$fw" in
+      laravel|lumen) add_stack server-laravel ;;
+      symfony)       add_stack server-symfony ;;
+    esac
+    PHP_TEST=""
+    [ -n "$(composer_dep "$d" phpunit/phpunit)" ] && PHP_TEST="phpunit"
+    [ -n "$(composer_dep "$d" pestphp/pest)" ] && PHP_TEST="pest"
+    if [ "$d" = "." ]; then
+      [ -f artisan ] && echo "HAS_ARTISAN=yes"
+      echo "PHP_TEST=${PHP_TEST:-none}"
+    else
+      echo "PHP dir=$d fw=${fw:-none} artisan=$([ -f "$d/artisan" ] && echo yes || echo no) test=${PHP_TEST:-none}"
+    fi
+    # composer scripts (values may be arrays of commands) — same filter as npm scripts
+    cscripts=$(pkg_field "$d/composer.json" 'pkg.scripts?Object.keys(pkg.scripts).filter(function(k){return /^(test|e2e|db|seed|migrate)([:.].+)?$/.test(k) || /^(dev|start|serve|setup|lint)$/.test(k)}).map(function(k){var v=pkg.scripts[k];return k+"="+(typeof v==="string"?v:JSON.stringify(v))}):[]')
+    [ -n "$cscripts" ] && [ "$cscripts" != "[]" ] && echo "PKG=$d COMPOSER_SCRIPTS=$cscripts"
+  done
+fi
+
 echo "--- STACKS ---"
 echo "STACKS=${STACKS# }"
 
 # ── test configs ──
 echo "--- TEST_CONFIG ---"
-find . -maxdepth 3 \( -name "playwright.config.*" -o -name "vitest.config.*" -o -name "jest.config.*" \) \
-  -not -path "*/node_modules/*" 2>/dev/null | sed 's/^/CONFIG=/' | head -20
+find . -maxdepth 3 \( -name "playwright.config.*" -o -name "vitest.config.*" -o -name "jest.config.*" -o -name "phpunit.xml" -o -name "phpunit.xml.dist" -o -name "phpunit.dist.xml" \) \
+  -not -path "*/node_modules/*" -not -path "*/vendor/*" -not -path "*/.idea/*" 2>/dev/null | sed 's/^/CONFIG=/' | head -20
 # e2e directories
-find . -maxdepth 3 -type d \( -name "e2e" -o -name "__e2e__" \) -not -path "*/node_modules/*" 2>/dev/null | sed 's/^/E2E_DIR=/' | head -10
+find . -maxdepth 3 -type d \( -name "e2e" -o -name "__e2e__" \) -not -path "*/node_modules/*" -not -path "*/vendor/*" 2>/dev/null | sed 's/^/E2E_DIR=/' | head -10
 
 # ── run scripts (root + workspaces) ──
 # Named suites (test:license, e2e:smoke, db:seed…) matter too —
