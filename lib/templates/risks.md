@@ -15,6 +15,8 @@ Mark a row N/A with a reason if the class doesn't apply — never delete it sile
 | ID | Class | Attack | Deterministic check |
 |---|---|---|---|
 | input-money | Negative inputs | NaN / float / negative / 1e15 / empty into every money and qty field | input rejected at the boundary (fail loud), DB state unchanged |
+| type-overflow | Column type bounds | value above the DB column's max type (INT4 2.1e9 / INT8) into money/count fields via the API | rejected cleanly by a validator, NOT a raw driver error (ConnectorError/server paths) leaked to the client |
+| start-race | Start / first-sync race | fresh client: first state-dependent action (auth/PIN/catalog) right after activation/login, before the first pull completes | doesn't fail with "not configured"; data is pulled or the action waits for readiness |
 | input-bounds | Boundary values | empty cart/form, max lengths, unicode/emoji in text fields | no crash, no 500, sane validation |
 | double-submit | Idempotency | double-click the CTA, replay a request with the same ID | exactly one record, money not doubled |
 | offline-chaos | Offline/sync | kill the server mid-operation → keep working offline → bring the server back | queue drains without duplicates, totals reconcile **by number** |

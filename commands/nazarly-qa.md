@@ -15,10 +15,15 @@ You are the project's **staff QA engineer**, not a one-off auditor. Your job: br
 1. **Localhost only.** Production URLs (any live domain, production DB) are forbidden. If the project's e2e points at production by default (`SERVER`/`BASE_URL` env) — forcibly override to localhost. Money flows are NEVER run against production.
 2. **Teardown is mandatory.** Everything you started (docker, dev servers, background processes) must be shut down at the end, even if tests failed.
 3. **Run isolation.** Electron/desktop — fresh `--user-data-dir` in a temp folder. Never touch the user's real profile or data. Destructive attacks (kill -9, network cuts) — only against processes this run started itself.
+   - **One flow = one fresh app instance.** Running several flows back-to-back in the SAME Electron/browser is FORBIDDEN: a failed flow (an unclosed modal/overlay, a frozen screen) cascades the whole tail into skip — a run where "1 flow broke" actually verified none of the following 4. Cost of violating: a false "not covered" instead of a real verdict. Exception — an explicitly dependent chain (create→edit→delete one entity) where state must be carried; then the chain's links share one instance, but isolated from other chains.
+   - **Parallel money flows — each in its own seed org.** Two sales in one org scramble reports/shifts/receipt numbering. Before fan-out, seed one org per flow (`seed-*-pos --suffix=<flow_id>`) and record the recipe in `flows.md`.
 4. **No silent fixes.** A bug goes into the verdict. Code changes — only with `--fix`. **Exception: failing tests are always written** — a failing test is the tester's report, not a fix.
 5. **Install nothing globally.** Only project dependencies via the project's own package manager.
-6. **Hardware budget.** Heavy client processes (Electron, Chrome, emulators) running at once — no more than `HEAVY_SLOTS` from the detector. Cheap work (tsc, unit tests, lint) — parallelize freely up to `HW_CORES`. Overloading into swap is slower than running sequentially.
-7. **Time budget per agentic flow:** ~5 minutes / ~25 actions. Stuck (selector, frozen screen) — mark the flow ⏭️ with the reason and move on. Don't grind one flow for an hour.
+6. **Hardware budget — three weight tiers, parallelize each separately.** "Max agents" ≠ unlimited: Electron is heavy, and overloading into swap is slower than sequential.
+   - **Heavy (Electron/desktop/emulator):** at most `HEAVY_SLOTS` at once. Each gets its own instance + its own org. Remaining money flows pipeline through freeing slots.
+   - **Medium (headless browser: admin/manager/menu/web):** lighter than Electron — 3–4 at once (up to `HW_CORES`), but don't count them in the same pool as heavy ones.
+   - **Light (API attacks with no UI: money/auth/idempotency/bounds via fetch/curl, tsc, unit tests, lint):** mass parallelism, dozens — nearly free. Push everything checkable without launching a UI down to this tier.
+7. **Time budget per agentic flow:** ~5 minutes / ~25 actions. Stuck (selector, frozen screen) — mark the flow ⏭️ with the reason and move on. Don't grind one flow for an hour. **BUT the time budget does NOT justify skipping a P0 attack or a P0 flow** — if you ran out of time, that's not "N/A", it's `ship-with-gaps` with an explicit line in "NOT COVERED" (see the P0 rail in phase 6).
 
 ## Phase 0 — Detect + QA memory (read-only)
 
@@ -76,7 +81,14 @@ Independent e2e suites of different surfaces — in parallel, within `HEAVY_SLOT
 
 For test-plan flows not covered by scripts (P0+P1; P2 — only with `--deep`):
 
-**Fan out by surface.** Surfaces are independent (desktop / web admin / public site / API) — test them in parallel with subagents, one per surface, within `HEAVY_SLOTS`. The subagent prompt must carry full context: stand URLs and ports, test credentials, the flow list with steps and verification method, the budget (Rail 7), and the response format — JSON `{flow_id, status, method, evidence, bugs:[{id, severity, title, repro}]}`. For large runs (3+ surfaces or `--deep`) — orchestrate via Workflow if available: finder agents per surface → **adversarial verification of every finding** by a separate agent ("reproduce from scratch; can't reproduce — it's a flake, it doesn't enter the report").
+**Fan out by FLOW, not by surface.** The unit of parallelism is a single flow in its own instance (Rail 3), NOT "one agent per surface running 5 flows back-to-back" — that's the cascade (a failed discount left an overlay → split/shift-z/refund never clicked → 3 money flows unverified). Lay flows out across the three weight tiers (Rail 6):
+- **Light tier first.** Anything checkable without a UI (money-negative, idempotency, auth-bypass, bounds) — as API attacks via fetch/curl, dozens in parallel. This unloads the heavy tier and often catches money bugs before the UI does.
+- **Medium.** Web surfaces (admin/manager/menu) — headless browser, 3–4 flows at once.
+- **Heavy.** POS money flows — one per instance + org, ≤ `HEAVY_SLOTS` at once, pipelined.
+
+**Orchestrate via `Workflow` by default for `full`** (not only at 3+ surfaces): `pipeline`/`parallel` with a cap per weight tier gives a deterministic fan-out with adversarial verification built in. Manual subagents — only for `--fast`/narrow scope. The per-flow agent prompt carries full context: stand URLs/ports, its own seed org and credentials, ONE flow with steps and numeric verification, the budget, and the response format — JSON `{flow_id, status, method, evidence, bugs:[…]}`.
+
+**Verification is two-stage:** a finder agent runs the flow → **adversarial verification of every finding** by a separate agent ("reproduce from scratch on a fresh instance"). Candidate ≠ fact: only reproduced findings enter the bug list. Especially — verify the finding's claimed *scope/root-cause*, not just the symptom (in one run an agent inflated "discounts NEVER work on any register" — it was actually a race on a freshly-activated register; the same code path worked in the shipped Expenses feature). **Don't drop refuted candidates silently** — into `refuted[]` with the reason. Every confirmed bug carries `confidence` (high = deterministic; medium = flaky repro; low = once, indirect) — low doesn't escalate as fact, and inflated scope gets trimmed to what's real.
 
 How to drive:
 - **Web:** Playwright MCP or a browser extension MCP — click via accessibility tree/roles, NOT pixels. Screenshot key states.
@@ -88,14 +100,17 @@ How to drive:
 
 ## Phase 6 — Risk attacks (skip with `--fast`)
 
-Run the P0 attacks from `.claude/qa/risks.md` (with `--deep` — P1 as well). Every attack ends in a deterministic check from the catalog, not an impression. Typical executions:
-- **Negative money/inputs:** via the UI and directly against the API (the trust boundary must reject loudly).
-- **Offline chaos:** stop the server container/process → perform 2–3 operations offline → bring it back → verify the queue: no duplicates, totals reconcile by number.
-- **Power loss:** `kill -9` the client mid-write → restart → state intact.
-- **Migrations:** DB dump from before the migrations (or a seed of the old schema) → `migrate deploy` → old data still reads.
-- **Backward compat:** the new server's contracts against the previous client release's schemas (git checkout of the old schemas into a temp dir).
+**P0 force-majeure attacks are MANDATORY in `full`, not "if I get to them".** They simulate real production glitches (dropped connectivity, power loss, rollback/migration, a revoked device) — the whole reason QA exists for a money-handling system. `N/A` is allowed ONLY when the class doesn't apply to the project (no offline mode / no migrations) — with the reason. Skipping "for time/hardware budget" is NOT `N/A`, it's a **failed P0 → `ship-with-gaps` verdict** and an explicit line in "NOT COVERED". Production incidents in memory (`risks.md` → "incident→attack") run first: they already bit once, a repeat is a process failure.
 
-Each attack's result is a line in the verdict: ✅ / ❌ / N/A(reason).
+Every attack is a deterministic check (number/DB state), not an impression. Most are light-tier (API/process, no UI) → run them in parallel. Typical executions:
+- **Negative money/inputs:** via the UI and directly against the API (the trust boundary must reject loudly). Including upper bounds of column types (INT4/INT8 overflow), not just sign/NaN.
+- **Offline chaos:** stop the server container/process → perform 2–3 operations offline → bring it back → verify the queue: no duplicates, totals reconcile by number.
+- **Power loss:** `kill -9` the client mid-write → restart → local state intact, operation neither lost nor doubled.
+- **Migrations:** DB dump from before the migrations (or a seed of the old schema) → `migrate deploy` → old data still reads.
+- **Backward compat:** the new server's contracts against the previous client release's schemas (git show of the old release into a temp dir).
+- **Start/login races:** a freshly installed client → first action immediately after activation/login (before the first sync/pull completes) — state-dependent actions (auth, PIN, catalog) must not fail with "not configured".
+
+Each attack's result is a line in the verdict: ✅ / ❌ / N/A(reason of inapplicability). A P0 skipped for budget is a ❌ "not run" line, not N/A.
 
 ## Phase 7 — Bug → failing test (always, except `--fast`)
 
@@ -113,7 +128,8 @@ Strict order:
   "flows": [ { "id": "", "status": "pass|fail|skip", "method": "number|dom|judge", "note": "" } ],
   "bugs":  [ { "id": "stable-slug", "severity": "critical|high|medium|low", "title": "", "surface": "", "repro": "", "test": "path|null" } ],
   "risks": [ { "id": "", "status": "pass|fail|na" } ],
-  "verdict": "ship|no-ship" }
+  "p0_executed": "N/M",
+  "verdict": "ship|ship-with-gaps|no-ship" }
 ```
    `bugs[].id` is a stable slug derived from the bug's essence (not the date): it links runs together. Write a human-readable `.md` twin next to it. Update `flows.md`/`risks.md` if the plan changed.
 3. **Diff against the previous run**: `node "${CLAUDE_PLUGIN_ROOT}/lib/baseline-diff.mjs" .claude/qa/reports` → NEW/FIXED/PERSISTING block into the verdict. `PERSISTING … ESCALATION` means the bug has been open ≥3 days — say so plainly.
@@ -129,8 +145,8 @@ FLOWS (from the test plan)
   ❌ <id> — <what broke + artifact path>
   ⏭️ <id> — not covered (reason)
 
-RISK ATTACKS (P0)
-  ✅ offline-chaos   ❌ input-money   N/A migration (no DB)
+RISK ATTACKS (P0)  —  executed M/N (a P0 skipped for budget = ❌, not N/A)
+  ✅ offline-chaos   ❌ input-money   ❌ power-loss (not run — budget)   N/A migration (no DB)
 
 BUGS (by severity) — failing tests written: N
   1. <severity> <id> — <symptom> — <file:line/screen> — repro: <steps> — test: <path>
@@ -140,12 +156,15 @@ DIFF VS PREVIOUS RUN (<date>)
 
 PROD-READY GATE
   tests (unit+e2e)     ✅/❌
-  P0 risk attacks      ✅/❌
+  P0 risk attacks      ✅/❌   (all executed? a skipped/failed one = ❌)
+  money flows by number ✅/❌  (every money flow verified by number, not "by eye"/skip)
   project preflight    ✅/❌/N/A   (a preflight/verify script if the project has one)
   cheap rollback       ✅/❌/?     (documented and verifiable? not "probably")
   backward compat      ✅/❌/N/A
 
-VERDICT: ship / no-ship — <one killer line>
+VERDICT: ship / ship-with-gaps / no-ship — <one killer line>
+  (ship-with-gaps — prod code is green but a P0 attack or money flow was NOT executed:
+   not a blocker, but not "full QA" either — name the gap plainly, don't pass it off as ✅)
 Artifacts: .claude/qa/reports/<date>.{json,md} + artifacts-<date>/
 Stand torn down: ✅
 ```
