@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1] — 2026-07-11
+
+Flaky-scan coverage for two vendor-documented synchronization anti-patterns the `sleep-as-sync` family was blind to (the scan was Playwright/vitest/jest-shaped).
+
+- **`cy.wait(<number>)`** (`sleep-as-sync`) in `lib/check-flaky-patterns.mjs` — Cypress's fixed-sleep equivalent of the `waitForTimeout` already flagged; the scan didn't see Cypress at all. The correct `cy.wait('@alias')` intercept form is *not* flagged (regex requires a digit after the paren). Source: [Cypress cy.wait docs](https://docs.cypress.io/api/commands/wait) / [Best Practices](https://docs.cypress.io/app/core-concepts/best-practices) — "using cy.wait(Number) is an anti-pattern … leads to flaky results."
+- **`'networkidle'` waits** (new `networkidle` class) — catches both `waitForLoadState('networkidle')` and `goto(..., { waitUntil: 'networkidle' })`. Source: [Playwright best practices](https://playwright.dev/docs/best-practices) / [waitForLoadState](https://playwright.dev/docs/api/class-page#page-wait-for-load-state) — "DISCOURAGED … Don't use this method for testing, rely on web assertions instead." The one legit use (asserting no background traffic) is allowlistable via `.claude/qa/flaky-allowlist.txt`, per the advice string.
+- Smoke suite: two positive fixtures (`cy.wait(1000)`, `waitForLoadState('networkidle')`) + a negative one (`cy.wait('@getUsers')` stays clean).
+
 ## [1.2.0] — 2026-07-11
 
 Research-driven upgrade: four survey passes over 2024–2026 testing practice (agentic QA, property/mutation/chaos, flake management, e2e/sync) distilled into the run. Theme: cheap deterministic machines catch the bugs; the LLM orchestrates.
