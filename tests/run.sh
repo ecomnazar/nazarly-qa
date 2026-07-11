@@ -83,6 +83,8 @@ import { vi } from 'vitest';
 vi.mock('./api');
 test('sleeps', async () => {
   await page.waitForTimeout(500);
+  cy.wait(1000);
+  await page.waitForLoadState('networkidle');
   const n = Math.random();
   expect(api.mock.calls.length).toBe(1);
   expect(total).toBe(10.5);
@@ -91,12 +93,15 @@ test.only('focused', () => {});
 EOF
 cat > "$F/tests/good.test.ts" <<'EOF'
 test('waits for signal', async () => {
+  cy.wait('@getUsers');
   await expect(page.getByRole('button')).toBeVisible();
   expect(total).toBe(1050);
 });
 EOF
 OUT=$(node "$LIB/check-flaky-patterns.mjs" "$F")
 check "sleep-as-sync"     "$OUT" "FLAKY[sleep-as-sync] tests/bad.test.ts"
+check "cy.wait number"    "$OUT" "cy.wait(1000)"
+check "networkidle wait"  "$OUT" "FLAKY[networkidle]"
 check "focused test"      "$OUT" "FLAKY[focused-test]"
 check "unseeded random"   "$OUT" "FLAKY[unseeded-random]"
 check "float money"       "$OUT" "FLAKY[float-money-assert]"
