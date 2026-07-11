@@ -1,6 +1,6 @@
 {
   "name": "nazarly-qa",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Full-project QA agent for Claude Code: local stand, all test suites in parallel, agentic flow testing, risk attacks, prod-ready verdict. Persistent tester memory per repo.",
   "author": {
     "name": "Nazar (Nazarly Digital)",
