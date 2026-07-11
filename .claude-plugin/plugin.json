@@ -1,0 +1,13 @@
+{
+  "name": "nazarly-qa",
+  "version": "1.0.0",
+  "description": "Full-project QA agent for Claude Code: local stand, all test suites in parallel, agentic flow testing, risk attacks, prod-ready verdict. Persistent tester memory per repo.",
+  "author": {
+    "name": "Nazar (Nazarly Digital)",
+    "url": "https://github.com/ecomnazar"
+  },
+  "homepage": "https://github.com/ecomnazar/nazarly-qa",
+  "repository": "https://github.com/ecomnazar/nazarly-qa",
+  "license": "MIT",
+  "keywords": ["qa", "testing", "e2e", "playwright", "claude-code", "agent", "prod-ready"]
+}

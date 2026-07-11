@@ -1,0 +1,14 @@
+{
+  "name": "nazarly-qa",
+  "owner": {
+    "name": "Nazar (Nazarly Digital)",
+    "url": "https://github.com/ecomnazar"
+  },
+  "plugins": [
+    {
+      "name": "nazarly-qa",
+      "source": "./",
+      "description": "Full-project QA agent: local stand, all test suites in parallel, agentic flow testing, risk attacks, prod-ready verdict."
+    }
+  ]
+}
