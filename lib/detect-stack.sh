@@ -37,6 +37,12 @@ dep_exists() {
   pkg_field "$f" 'pkg.dependencies&&pkg.dependencies["'"$name"'"]?1:(pkg.devDependencies&&pkg.devDependencies["'"$name"'"]?1:"")'
 }
 
+# composer_dep <dir> <package-name> -> "1" if present in require/require-dev
+composer_dep() {
+  local d="$1" name="$2"
+  pkg_field "$d/composer.json" 'pkg.require&&pkg.require["'"$name"'"]?1:((pkg["require-dev"]||{})["'"$name"'"]?1:"")'
+}
+
 echo "PROJECT_DIR=$ROOT"
 echo "DETECTED_AT=$(date +%Y-%m-%dT%H:%M:%S 2>/dev/null || echo unknown)"
 
@@ -124,9 +130,15 @@ for pf in ${PKG_FILES[@]+"${PKG_FILES[@]}"}; do
   dir=$(dirname "$pf")
   name=$(pkg_field "$pf" 'pkg.name||""')
   kind=""
+  # vite next to a PHP framework (Laravel 12+ ships it by default) is the asset
+  # pipeline, not a web app — without this check a Laravel backend detects as web-vite
+  # and the QA run drives `npm run dev` instead of the real server.
+  php_fw=""
+  { [ -n "$(composer_dep "$dir" laravel/framework)" ] || [ -n "$(composer_dep "$dir" symfony/framework-bundle)" ]; } && php_fw=1
   [ -n "$(dep_exists "$pf" electron)" ] && kind="$kind electron" && add_stack electron
   [ -n "$(dep_exists "$pf" next)" ] && kind="$kind next" && add_stack web-next
-  { [ -n "$(dep_exists "$pf" vite)" ] && [ -z "$(dep_exists "$pf" electron)" ]; } && kind="$kind vite" && add_stack web-vite
+  { [ -n "$(dep_exists "$pf" vite)" ] && [ -z "$(dep_exists "$pf" electron)" ] && [ -z "$php_fw" ]; } && kind="$kind vite" && add_stack web-vite
+  { [ -n "$(dep_exists "$pf" vite)" ] && [ -n "$php_fw" ]; } && kind="$kind +vite-assets"
   [ -n "$(dep_exists "$pf" expo)" ] && kind="$kind expo" && add_stack expo-rn
   { [ -n "$(dep_exists "$pf" react-native)" ] && [ -z "$(dep_exists "$pf" expo)" ]; } && kind="$kind react-native" && add_stack rn
   [ -n "$(dep_exists "$pf" @nestjs/core)" ] && kind="$kind nestjs" && add_stack server-nest
@@ -146,13 +158,30 @@ for pf in ${PKG_FILES[@]+"${PKG_FILES[@]}"}; do
   echo "WS name=${name:-?} dir=$dir kind=${kind# }"
 done
 
+# ── php / composer: a PHP backend can have no package.json at all, or one that
+# only drives the asset pipeline — package.json scanning alone misses it entirely ──
+if [ -f "composer.json" ]; then
+  echo "--- PHP ---"
+  echo "HAS_COMPOSER=yes"
+  [ -n "$(composer_dep . laravel/framework)" ] && add_stack server-laravel
+  [ -n "$(composer_dep . symfony/framework-bundle)" ] && add_stack server-symfony
+  [ -f artisan ] && echo "HAS_ARTISAN=yes"
+  PHP_TEST=""
+  [ -n "$(composer_dep . phpunit/phpunit)" ] && PHP_TEST="phpunit"
+  [ -n "$(composer_dep . pestphp/pest)" ] && PHP_TEST="pest"
+  echo "PHP_TEST=${PHP_TEST:-none}"
+  # composer scripts (values may be arrays of commands) — same filter as npm scripts
+  cscripts=$(pkg_field composer.json 'pkg.scripts?Object.keys(pkg.scripts).filter(function(k){return /^(test|e2e|db|seed|migrate)([:.].+)?$/.test(k) || /^(dev|start|serve|setup|lint)$/.test(k)}).map(function(k){var v=pkg.scripts[k];return k+"="+(typeof v==="string"?v:JSON.stringify(v))}):[]')
+  [ -n "$cscripts" ] && [ "$cscripts" != "[]" ] && echo "PKG=. COMPOSER_SCRIPTS=$cscripts"
+fi
+
 echo "--- STACKS ---"
 echo "STACKS=${STACKS# }"
 
 # ── test configs ──
 echo "--- TEST_CONFIG ---"
-find . -maxdepth 3 \( -name "playwright.config.*" -o -name "vitest.config.*" -o -name "jest.config.*" \) \
-  -not -path "*/node_modules/*" 2>/dev/null | sed 's/^/CONFIG=/' | head -20
+find . -maxdepth 3 \( -name "playwright.config.*" -o -name "vitest.config.*" -o -name "jest.config.*" -o -name "phpunit.xml" -o -name "phpunit.xml.dist" -o -name "phpunit.dist.xml" \) \
+  -not -path "*/node_modules/*" -not -path "*/vendor/*" -not -path "*/.idea/*" 2>/dev/null | sed 's/^/CONFIG=/' | head -20
 # e2e directories
 find . -maxdepth 3 -type d \( -name "e2e" -o -name "__e2e__" \) -not -path "*/node_modules/*" 2>/dev/null | sed 's/^/E2E_DIR=/' | head -10
 

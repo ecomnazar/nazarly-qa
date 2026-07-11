@@ -41,6 +41,33 @@ check "hardware budget"        "$OUT" "HEAVY_SLOTS="
 check "qa memory block"        "$OUT" "QA_REPORT_COUNT=0"
 check "flow docs"              "$OUT" "DOC=README.md"
 
+echo "== detect-stack.sh: php/laravel =="
+# fixture: a Laravel backend whose package.json only drives the vite asset pipeline
+mkdir -p "$TMP/laravel"
+cat > "$TMP/laravel/composer.json" <<'EOF'
+{ "name": "acme/shop-backend",
+  "require": { "php": "^8.2", "laravel/framework": "^12.0" },
+  "require-dev": { "phpunit/phpunit": "^11.5" },
+  "scripts": { "test": ["@php artisan test"], "dev": ["npx concurrently \"php artisan serve\" \"npm run dev\""], "setup": "cp .env.example .env" } }
+EOF
+cat > "$TMP/laravel/package.json" <<'EOF'
+{ "name": "acme-shop-assets", "devDependencies": { "vite": "^6.0.0" }, "scripts": { "dev": "vite", "build": "vite build" } }
+EOF
+touch "$TMP/laravel/artisan" "$TMP/laravel/phpunit.xml"
+OUT=$(bash "$LIB/detect-stack.sh" "$TMP/laravel")
+check "composer detected"      "$OUT" "HAS_COMPOSER=yes"
+check "laravel stack"          "$OUT" "server-laravel"
+check "artisan flagged"        "$OUT" "HAS_ARTISAN=yes"
+check "php test runner"        "$OUT" "PHP_TEST=phpunit"
+check "composer test script"   "$OUT" "test="
+check "phpunit config"         "$OUT" "CONFIG=./phpunit.xml"
+check "vite marked as assets"  "$OUT" "+vite-assets"
+if echo "$OUT" | grep "^STACKS=" | grep -q "web-vite"; then
+  echo "  FAIL: laravel asset-pipeline vite misdetected as web-vite stack"; FAIL=1
+else
+  echo "  ok: web-vite not in STACKS for a laravel backend"
+fi
+
 echo "== baseline-diff.mjs =="
 R="$TMP/reports"; mkdir -p "$R"
 cat > "$R/2026-01-01-1200.json" <<'EOF'
