@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.2] — 2026-07-11
+
+- **`networkidle0`/`networkidle2`** — the `networkidle` regex now also catches Puppeteer's variants (`networkidle[02]?`); the closing quote previously had to follow `networkidle` immediately, so Puppeteer waits slipped through. Source: [Puppeteer page.goto](https://pptr.dev/api/puppeteer.page.goto) — same fixed-idle-window semantics Playwright discourages for tests. Smoke suite: positive fixture `goto(url, { waitUntil: 'networkidle0' })`.
+
 ## [1.2.1] — 2026-07-11
 
 Flaky-scan coverage for two vendor-documented synchronization anti-patterns the `sleep-as-sync` family was blind to (the scan was Playwright/vitest/jest-shaped).

@@ -85,6 +85,7 @@ test('sleeps', async () => {
   await page.waitForTimeout(500);
   cy.wait(1000);
   await page.waitForLoadState('networkidle');
+  await page.goto(url, { waitUntil: 'networkidle0' });
   const n = Math.random();
   expect(api.mock.calls.length).toBe(1);
   expect(total).toBe(10.5);
@@ -102,6 +103,7 @@ OUT=$(node "$LIB/check-flaky-patterns.mjs" "$F")
 check "sleep-as-sync"     "$OUT" "FLAKY[sleep-as-sync] tests/bad.test.ts"
 check "cy.wait number"    "$OUT" "cy.wait(1000)"
 check "networkidle wait"  "$OUT" "FLAKY[networkidle]"
+check "networkidle0 puppeteer" "$OUT" "networkidle0"
 check "focused test"      "$OUT" "FLAKY[focused-test]"
 check "unseeded random"   "$OUT" "FLAKY[unseeded-random]"
 check "float money"       "$OUT" "FLAKY[float-money-assert]"
