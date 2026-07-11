@@ -176,6 +176,8 @@ done
 echo "--- QA_MEMORY ---"
 [ -f ".claude/qa/flows.md" ] && echo "QA_FLOWS=.claude/qa/flows.md"
 [ -f ".claude/qa/risks.md" ] && echo "QA_RISKS=.claude/qa/risks.md"
+[ -f ".claude/qa/invariants.md" ] && echo "QA_INVARIANTS=.claude/qa/invariants.md"
+[ -f ".claude/qa/flaky.json" ] && echo "QA_FLAKY=.claude/qa/flaky.json"
 LAST_REPORT=$(find .claude/qa/reports -maxdepth 1 -name '*.json' 2>/dev/null | sort | tail -1)
 [ -n "$LAST_REPORT" ] && echo "QA_LAST_REPORT=$LAST_REPORT"
 REPORT_COUNT=$(find .claude/qa/reports -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' ')

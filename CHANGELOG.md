@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.0] — 2026-07-11
+
+Research-driven upgrade: four survey passes over 2024–2026 testing practice (agentic QA, property/mutation/chaos, flake management, e2e/sync) distilled into the run. Theme: cheap deterministic machines catch the bugs; the LLM orchestrates.
+
+- **Invariant oracles** (new phase 5–6 block + `lib/templates/invariants.md` → `.claude/qa/invariants.md`): machine checks (SQL/curl/script) run after every money flow and attack. Oracle trust hierarchy: invariant → differential → DOM → LLM-judge. A bug caught by an invariant needs no adversarial verification.
+- **A bug exists only with a reproduction** (AnyPoC/tool-receipts pattern): `confidence: high` requires a working repro; not reproduced in 2–3 attempts → `unconfirmed[]`, not `bugs[]`. Every `evidence` must be a tool artifact from this run.
+- **Flake dynamics** on top of the static scan: unit suites run order-shuffled with a recorded seed; new/changed test files stressed ×5; a failed test is re-run once in isolation on the same SHA (passed = `flaky_suspect`, not "fixed itself"); per-test dossier in `.claude/qa/flaky.json`, 2+-run repeats become mandatory fix candidates.
+- **New static scan patterns** in `lib/check-flaky-patterns.mjs` (new script): `shared-mock-state` (mock + call-count asserts without a reset — the top JS order-dependency class), `unseeded-random` (Math.random / unseeded faker), `float-money-assert`.
+- **Escape rate** — the process's headline metric: `escapes[]` in the report (prod incidents since the previous run + an honest "should QA have caught it"), `QA-SCORE` and `THEATER-SIGNAL` in `baseline-diff.mjs`, a new "escapes closed" line in the PROD-READY GATE.
+- **Phase 9 — self-improvement retro**: every run captures one lesson about the tool itself (not the project) and offers to open an issue/PR here. Rails only tighten. New `CONTRIBUTING.md` codifies the shape.
+- Report schema (additive): `shuffle_seed`, `invariants[]`, `unconfirmed[]`, `flaky_suspects[]`, `escapes[]`, `metrics{}`, plus `confidence`/`class`/`evidence`/`suggested_fix` on bugs and `refuted[]`/`uncovered[]` (previously prompt-only).
+- Phase 2 now backfills memory files added by newer plugin versions into repos that already have `.claude/qa/`.
+- Phase 7: the failing test must fail *for the bug's reason*; invariant-violating bugs also get a guard-script proposal that closes the whole class.
+- `baseline-diff.mjs`: `REFUTED_REPEAT`, `COVERAGE_REGRESS` ratchet (same-scope runs only), `UNCOVERED`, `FLAKY_REPEAT`.
+- Smoke suite: 36 checks (was 20) — new script covered with positive and negative fixtures.
+
 ## [1.1.0] — 2026-07-11
 
 Methodology hardening from a real run (a QA pass that only hit ~40% coverage exposed two failure modes).
